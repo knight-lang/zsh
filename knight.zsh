@@ -1,42 +1,73 @@
 #!/bin/zsh
 
-setopt extendedglob rcquotes #nounset
-setopt NO_GLOBAL_EXPORT noshortloops warncreateglobal localloops
+################################################################################
+#                                    Setup                                     #
+################################################################################
 
-typeset -g match mbegin mend # Suppress `warncreateglobal`
+## Set options
+setopt extendedglob     # Required for advanced globbing features
+setopt noglobalexport   # `typeset -g` doesn't imply the variable is exported
+setopt warncreateglobal # Make sure global variables aren't created accidentally
 
+## Seed `$RANDOM` for the knight `RANDOM` function.
+# (If you don't seed it, ZSH will always use the same initial seed)
 RANDOM=$(date +%s)
 
-typeset -ga reply
-typeset -g REPLY LINE FS=$'\x1C'
+## Predeclare global variables so `warncreateglobal` won't get mad at us.
+typeset -g REPLY  # "Return value" from functions
+typeset -ga reply # Same as REPLY, but when an array is needed
 
-die () { print ${ZSH_SCRIPT:t}: $@ >&2; exit 1 }
-bug () die bug: $@
+## Print out a message and exit the program
+die () {
+	print -- "${ZSH_SCRIPT:t}: $*" >&2
+	exit 1
+}
 
 ################################################################################
 #                                    Arrays                                    #
 ################################################################################
+
+## Array are implemented via the variable `arrays`, an associative array itself.
+# How it works is the "key" is `aNUMBER`, where `NUMBER` is a unique ID for each
+# array (such as `a12`, or whatever).
+# 
+# The length of the array is stored as just `$key`, ie the length of array `a34`
+# is simply `$arrays[a34]`.
+#
+# The elements of the array are stored as `$key:$idx` (`idx` starts at 0), ie
+# the first element of `a34` would be `$arrays[a34:1]`.
 typeset -gA arrays=(a0 0)
 
+## Creates a new array from arguments, setting `REPLY` to its name
 new_ary () {
-	# Empty arrays are always `a0`.
+	# Empty arrays are always `a0`; this is used in things like `to_bool`.
 	(( # )) || { REPLY=a0; return }
 
-	arrays[${REPLY::=a$#arrays}]=$#
+	# Set `REPLY` to the name of the array
+	REPLY=a$#arrays
 
-	local i
-	for (( i = 0 ; i < $#; i++ )) do
-		arrays[$REPLY$FS$i]=${@[i+1]}
+	# Set the length of the array
+	arrays[$REPLY]=$#
+
+	# Set each element of the array
+	local element i=0
+	for element do
+		arrays[$REPLY:$((i++))]=$element
 	done
 }
 
-ajoin () {
-	local arg result sep=$1
-	shift
-	for arg do
-		to_str $arg
-		result+=${result:+$sep}$REPLY
+## Joins an array
+# First argument should be the string to join with, the second should be the
+# array name. Converts each element in the array to a string first, and sets
+# `$REPLY` to the end result
+ary_join () {
+	local result i=0
+
+	for (( i = 0; i < arrays[$2]; i++ )) do
+		to_str $arrays[$2:$i]
+		result+=${result:+$1}$REPLY
 	done
+
 	REPLY=$result
 }
 
@@ -49,12 +80,13 @@ to_str () case ${1:0:1} in
 	T)     REPLY=true ;;
 	F)     REPLY=false ;;
 	N)     REPLY= ;;
-	a)     to_ary $1; ajoin $'\n' $reply ;;
-	*) bug unknown type for $0: $1 ;;
+	a)     ary_join $'\n' $1 ;;
+	*) die unknown type for $0: $1 ;;
 esac
 
 to_num () case ${1:0:1} in
-	s) case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
+	s) typeset -g match mbegin mend # so `warncreateglobal` wont getmad
+	case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
 		((#b)((-|)<->)*) REPLY=$match[1] ;;
 		((#b)(+<->)*) REPLY=${match[1]#+} ;;
 		(*) REPLY=0 ;;
@@ -63,7 +95,7 @@ to_num () case ${1:0:1} in
 	T)    REPLY=1 ;;
 	n)    REPLY=${1#?};;
 	a)    REPLY=$arrays[$1] ;;
-	*) bug unknown type for $0: $1 ;;
+	*) die unknown type for $0: $1 ;;
 esac
 
 to_bool () [[ $1 != (s|[na]0|[FN]) ]]
@@ -72,12 +104,12 @@ to_ary () case $1 in # Notably not `${1:0:1}`
 	[sFN]) reply=() ;;
 	T)     reply=(T) ;;
 	s*)    reply=(s${(s::)^1#s}) ;;
-	n*)    reply=(n${${1#n}%%<->}${(s::)^1##n(-|)})  ;;
+	n*)    reply=(n${${1#n}%%<->}${(s::)^1##n(-|)}) ;;
 	a*) reply=()
 		while (( $#reply < arrays[$1] )) do
-			reply+=$arrays[$1$FS$#reply]
+			reply+=$arrays[$1:$#reply]
 		done ;;
-	*) bug unknown type for $0: $1 ;;
+	*) die unknown type for $0: $1 ;;
 esac
 
 ################################################################################
@@ -100,10 +132,10 @@ dump () case ${1:0:1} in
 		local i
 		for (( i = 0; i < $arrays[$1]; i++ )) do
 			(( i )) && print -n ', '
-			dump $arrays[$1$FS$i]
+			dump $arrays[$1:$i]
 		done
 		print -n \] ;;
-	*) bug unknown type for $0: $1
+	*) die unknown type for $0: $1
 esac
 
 eql () {
@@ -113,7 +145,7 @@ eql () {
 
 	local i
 	for (( i = 0; i < $arrays[$1]; i++ )) do
-		eql $arrays[$1$FS$i] $arrays[$2$FS$i] || return 1
+		eql $arrays[$1:$i] $arrays[$2:$i] || return 1
 	done
 	return 0
 }
@@ -138,11 +170,11 @@ compare () case ${1:0:1} in
 		local -a rep=($reply)
 		local i min=$(( min(arrays[$1], $#rep) ))
 		for (( i = 0; i < min; i++ )) do
-			compare $arrays[$1$FS$i] $rep[i+1]
+			compare $arrays[$1:$i] $rep[i+1]
 			(( REPLY )) && return
 		done
 		REPLY=$(( cmp(arrays[$1], $#rep) )) ;;
-	*) bug unknown type for $0: $1
+	*) die unknown type for $0: $1
 esac
 
 ################################################################################
@@ -151,12 +183,12 @@ esac
 
 typeset -ga asts
 
-# readonly -A arities=(${(z):-
+# readonly -A arities=(${=${:-\
 # 	{P,R}\ 0 \
-# 	{\`,O,E,B,C,Q,!,L,D,\,,A,\[,\],\~}\ 1 \
+# 	{\$,O,E,B,C,Q,!,L,D,\,,A,\[,\],\~}\ 1 \
 # 	{\-,\+,\*,\/,\%,\^,\?,\<,\>,\&,\|,\;,\=,W}\ 2 \
-# 	{G,I}\ 3 \
-# 	S\ 4})
+# 	{G,I}\ 3
+# 	S\ 4}})
 
 typeset -A arities
 for k in \
@@ -171,6 +203,7 @@ do
 done
 unset _tmp
 
+typeset -g LINE 
 function next_token {
 	# Strip leading whitespace and comments
 	LINE=${LINE##(\#[^$'\n']#|[:()\{\}[:space:]]#)#}
@@ -179,6 +212,7 @@ function next_token {
 	[[ -z $LINE ]] && return 1
 
 	# Parse the token
+	typeset -g match mbegin mend # Used for pattern matching
 	case $LINE in
 		(@*) REPLY=a0 LINE=${LINE:1}; return 0 ;;
 		((#b)(<->)*)                     REPLY=n$match[1] ;;
@@ -194,6 +228,10 @@ function next_token {
 	LINE=${LINE:$mend[1]}
 }
 
+
+## FS is 
+readonly FS=$'\0'
+
 function generate_ast {
 	next_token || return # If there was a problem return early
 
@@ -202,7 +240,7 @@ function generate_ast {
 	local i token=$REPLY arity=$arities[${REPLY#f}]
 	for (( i = 1; i <= arity; i++ )); do
 		generate_ast || die missing argument $i for function ${(qq)token:1:2}
-		token="$token$FS$REPLY"
+		token=$token$FS$REPLY
 	done
 
 	asts+=($token)
@@ -316,7 +354,7 @@ function run {
 		%) to_num $2; REPLY=n$((${1#?} % REPLY)) ;;
 		\^) case ${1:0:1} in
 			n) to_num $2; REPLY=n$((${1#?} ** REPLY)) ;;
-			a) to_str $2; to_ary $1; ajoin "$REPLY" $reply; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
+			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
 			*) die unknown argument to $fn: $1
 			esac ;;
 		\?) eql $1 $2; newbool ;;
