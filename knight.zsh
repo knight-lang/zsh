@@ -81,7 +81,7 @@ to_str () case ${1:0:1} in
 	F)     REPLY=false ;;
 	N)     REPLY= ;;
 	a)     ary_join $'\n' $1 ;;
-	*) die unknown type for $0: $1 ;;
+	*) die "unknown type for $0: $1" ;;
 esac
 
 to_num () case ${1:0:1} in
@@ -95,7 +95,7 @@ to_num () case ${1:0:1} in
 	T)    REPLY=1 ;;
 	n)    REPLY=${1#?};;
 	a)    REPLY=$arrays[$1] ;;
-	*) die unknown type for $0: $1 ;;
+	*) die "unknown type for $0: $1" ;;
 esac
 
 to_bool () [[ $1 != (s|[na]0|[FN]) ]]
@@ -109,7 +109,7 @@ to_ary () case $1 in # Notably not `${1:0:1}`
 		while (( $#reply < arrays[$1] )) do
 			reply+=$arrays[$1:$#reply]
 		done ;;
-	*) die unknown type for $0: $1 ;;
+	*) die "unknown type for $0: $1" ;;
 esac
 
 ################################################################################
@@ -135,7 +135,7 @@ dump () case ${1:0:1} in
 			dump $arrays[$1:$i]
 		done
 		print -n \] ;;
-	*) die unknown type for $0: $1
+	*) die "unknown type for $0: $1"
 esac
 
 eql () {
@@ -174,7 +174,7 @@ compare () case ${1:0:1} in
 			(( REPLY )) && return
 		done
 		REPLY=$(( cmp(arrays[$1], $#rep) )) ;;
-	*) die unknown type for $0: $1
+	*) die "unknown type for $0: $1"
 esac
 
 ################################################################################
@@ -221,7 +221,7 @@ function next_token {
 		((#b)([TFN][_[:upper:]]#)*)      REPLY=${LINE:0:1} ;;
 		((#b)([_[:upper:]]##|[\+\-\$\+\*\/\%\^\<\>\?\&\|\!\;\=\~\,\[\]])*)
 			REPLY=f${LINE:0:1} ;;
-		(*) die unknown token start: ${(q)LINE:0:1} ;;
+		(*) die "unknown token start: ${(q)LINE:0:1}" ;;
 	esac
 
 	# Replace the line; the return value is also 0
@@ -239,7 +239,7 @@ function generate_ast {
 
 	local i token=$REPLY arity=$arities[${REPLY#f}]
 	for (( i = 1; i <= arity; i++ )); do
-		generate_ast || die missing argument $i for function ${(qq)token:1:2}
+		generate_ast || die "missing argument $i for function ${(qq)token:1:2}"
 		token=$token$FS$REPLY
 	done
 
@@ -254,7 +254,7 @@ typeset -gA variables
 
 function eval_kn {
 	LINE=${1?}
-	generate_ast || die no program given
+	generate_ast || die 'no program given'
 	run $REPLY
 }
 
@@ -262,7 +262,7 @@ function run {
 	# Handle variables and non-asts
 	if [[ ${1:0:1} = i ]]; then
 		REPLY=$variables[$1]
-		[[ -n $REPLY ]] || die unknown variable ${1#i}
+		[[ -n $REPLY ]] || die "unknown variable ${1#i}"
 		return
 	elif [[ ${1:0:1} != A ]]; then
 		REPLY=$1
@@ -320,7 +320,7 @@ function run {
 		A) case ${1:0:1} in
 			s) 1=${1#s}; REPLY=n$(( #1 )) ;;
 			n) REPLY=s${(#)1#n} ;;
-			*)  die unknown argument to $fn: $1 ;;
+			*)  die "unknown argument to $fn: $1" ;;
 			esac ;;
 		\[) to_ary $1; REPLY=$reply[1] ;;
 		\]) case ${1:0:1} in
@@ -335,7 +335,7 @@ function run {
 			s) to_str $2; REPLY=s${1#?}$REPLY ;;
 			a) to_ary $1; local old=($reply)
 			   to_ary $2; new_ary $old $reply ;;
-			*) die unknown argument to $fn: $1
+			*) die "unknown argument to $fn: $1"
 			esac ;;
 		-) to_num $2; REPLY=n$((${1#?} - REPLY)) ;;
 		\*) case ${1:0:1} in
@@ -348,14 +348,14 @@ function run {
 					ary+=($reply)
 				done
 				new_ary $ary ;;
-			*) die unknown argument to $fn: $1
+			*) die "unknown argument to $fn: $1"
 			esac ;;
 		/) to_num $2; REPLY=n$((${1#?} / REPLY)) ;;
 		%) to_num $2; REPLY=n$((${1#?} % REPLY)) ;;
 		\^) case ${1:0:1} in
 			n) to_num $2; REPLY=n$((${1#?} ** REPLY)) ;;
 			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
-			*) die unknown argument to $fn: $1
+			*) die "unknown argument to $fn: $1"
 			esac ;;
 		\?) eql $1 $2; newbool ;;
 		\<) compare $1 $2; (( REPLY < 0 )); newbool ;;
@@ -369,7 +369,7 @@ function run {
 				to_num $2; shift $REPLY reply
 				to_num $3; shift -p $(($#reply - REPLY)) reply
 				new_ary $reply ;;
-			*) die unknown argument to $fn: $1 ;;
+			*) die "unknown argument to $fn: $1" ;;
 			esac ;;
 		S) case ${1:0:1} in
 			s) to_num $2; local start=$REPLY
@@ -382,9 +382,9 @@ function run {
 				to_ary $4;
 				answer[start+1,start+len]=($reply)
 				new_ary $answer ;;
-			*) die unknown argument to $fn: $1 ;;
+			*) die "unknown argument to $fn: $1" ;;
 			esac ;;
-		*) die unknown function $fn ;;
+		*) die "unknown function $fn" ;;
 	esac
 	return 0
 }
