@@ -61,7 +61,8 @@ new_ary () {
 # array name. Converts each element in the array to a string first, and sets
 # `$REPLY` to the end result
 ary_join () {
-	local result i=0
+	# We have to have `result` be local because `to_str` will clobber `REPLY`.
+	local result i
 
 	for (( i = 0; i < arrays[$2]; i++ )) do
 		to_str $arrays[$2:$i]
@@ -80,11 +81,11 @@ to_str () case ${1:0:1} in
 	T)     REPLY=true ;;
 	F)     REPLY=false ;;
 	N)     REPLY= ;;
-	a)     ary_join $'\n' $1 ;;
+	a)     ary_join $'\n' $1 ;; # `ary_join` sets result
 	*) die "unknown type for $0: $1" ;;
 esac
 
-to_num () case ${1:0:1} in
+to_int () case ${1:0:1} in
 	s) typeset -g match mbegin mend # so `warncreateglobal` wont getmad
 	case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
 		((#b)((-|)<->)*) REPLY=$match[1] ;;
@@ -165,7 +166,7 @@ compare () case ${1:0:1} in
 		else; [[ ${1#s} == $REPLY ]]; REPLY=$?; fi ;;
 	T) to_bool $2; REPLY=$?;;
 	F) to_bool $2; REPLY=$(( -!? ));;
-	n) to_num $2; REPLY=$(( cmp(${1#n},REPLY) )) ;;
+	n) to_int $2; REPLY=$(( cmp(${1#n},REPLY) )) ;;
 	a) to_ary $2
 		local -a rep=($reply)
 		local i min=$(( min(arrays[$1], $#rep) ))
@@ -216,7 +217,7 @@ function next_token {
 	case $LINE in
 		(@*) REPLY=a0 LINE=${LINE:1}; return 0 ;;
 		((#b)(<->)*)                     REPLY=n$match[1] ;;
-		((#b)([_[:lower:][:digit:]]##)*) REPLY=i$match[1] ;;
+		((#b)([_[:lower:][:digit:]]##)*) REPLY=v$match[1] ;;
 		((#b)(\"[^\"]#\"|\'[^\']#\')*)   REPLY=s${${match#?}%?} ;;
 		((#b)([TFN][_[:upper:]]#)*)      REPLY=${LINE:0:1} ;;
 		((#b)([_[:upper:]]##|[\+\-\$\+\*\/\%\^\<\>\?\&\|\!\;\=\~\,\[\]])*)
@@ -260,9 +261,9 @@ function eval_kn {
 
 function run {
 	# Handle variables and non-asts
-	if [[ ${1:0:1} = i ]]; then
+	if [[ ${1:0:1} = v ]]; then
 		REPLY=$variables[$1]
-		[[ -n $REPLY ]] || die "unknown variable ${1#i}"
+		[[ -n $REPLY ]] || die "unknown variable ${1#v}"
 		return
 	elif [[ ${1:0:1} != A ]]; then
 		REPLY=$1
@@ -301,10 +302,10 @@ function run {
 		# ARITY 1
 		C) run $1 ;;
 		E) to_str $1; eval_kn $REPLY ;;
-		\~) to_num $1; REPLY=n$((-REPLY)) ;;
+		\~) to_int $1; REPLY=n$((-REPLY)) ;;
 		$) to_str $1; REPLY=s$($=REPLY) ;;
 		!) ! to_bool $1; newbool ;;
-		Q) to_num $1; exit $REPLY ;;
+		Q) to_int $1; exit $REPLY ;;
 		L) case ${1:0:1} in
 			s) REPLY=n${#1#s} ;;
 			a) REPLY=n$arrays[$1] ;;
@@ -331,17 +332,17 @@ function run {
 		# ARITY 2
 		\;) REPLY=$2 ;;
 		+) case ${1:0:1} in
-			n) to_num $2; REPLY=n$((${1#?} + REPLY)) ;;
+			n) to_int $2; REPLY=n$((${1#?} + REPLY)) ;;
 			s) to_str $2; REPLY=s${1#?}$REPLY ;;
 			a) to_ary $1; local old=($reply)
 			   to_ary $2; new_ary $old $reply ;;
 			*) die "unknown argument to $fn: $1"
 			esac ;;
-		-) to_num $2; REPLY=n$((${1#?} - REPLY)) ;;
+		-) to_int $2; REPLY=n$((${1#?} - REPLY)) ;;
 		\*) case ${1:0:1} in
-			n) to_num $2; REPLY=n$((${1#?} * REPLY)) ;;
-			s) to_num $2; set -- ${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
-			a) to_ary $1; to_num $2
+			n) to_int $2; REPLY=n$((${1#?} * REPLY)) ;;
+			s) to_int $2; set -- ${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
+			a) to_ary $1; to_int $2
 				local -a ary
 				local i=
 				for (( i = 0; i < $REPLY; i++ )); do
@@ -350,10 +351,10 @@ function run {
 				new_ary $ary ;;
 			*) die "unknown argument to $fn: $1"
 			esac ;;
-		/) to_num $2; REPLY=n$((${1#?} / REPLY)) ;;
-		%) to_num $2; REPLY=n$((${1#?} % REPLY)) ;;
+		/) to_int $2; REPLY=n$((${1#?} / REPLY)) ;;
+		%) to_int $2; REPLY=n$((${1#?} % REPLY)) ;;
 		\^) case ${1:0:1} in
-			n) to_num $2; REPLY=n$((${1#?} ** REPLY)) ;;
+			n) to_int $2; REPLY=n$((${1#?} ** REPLY)) ;;
 			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
 			*) die "unknown argument to $fn: $1"
 			esac ;;
@@ -361,30 +362,30 @@ function run {
 		\<) compare $1 $2; (( REPLY < 0 )); newbool ;;
 		\>) compare $1 $2; (( REPLY > 0 )); newbool ;;
 		G) case ${1:0:1} in
-			s) to_num $2
+			s) to_int $2
 				local start=$REPLY
-				to_num $3
+				to_int $3
 				REPLY=s${${1#s}:$start:$REPLY} ;;
 			a) to_ary $1
-				to_num $2; shift $REPLY reply
-				to_num $3; shift -p $(($#reply - REPLY)) reply
+				to_int $2; shift $REPLY reply
+				to_int $3; shift -p $(($#reply - REPLY)) reply
 				new_ary $reply ;;
 			*) die "unknown argument to $fn: $1" ;;
 			esac ;;
 		S) case ${1:0:1} in
-			s) to_num $2; local start=$REPLY
-				to_num $3; local len=$REPLY
+			s) to_int $2; local start=$REPLY
+				to_int $3; local len=$REPLY
 				to_str $4
 				REPLY=${1:0:$((start+1))}$REPLY${1:$((start+1+len))} ;;
 			a) to_ary $1; local answer=($reply)
-				to_num $2; local start=$REPLY
-				to_num $3; local len=$REPLY
+				to_int $2; local start=$REPLY
+				to_int $3; local len=$REPLY
 				to_ary $4;
 				answer[start+1,start+len]=($reply)
 				new_ary $answer ;;
 			*) die "unknown argument to $fn: $1" ;;
 			esac ;;
-		*) die "unknown function $fn" ;;
+		*) die "BUG: unknown function $fn" ;;
 	esac
 	return 0
 }
