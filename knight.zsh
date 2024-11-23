@@ -77,7 +77,7 @@ ary_join () {
 ################################################################################
 
 to_str () case ${1:0:1} in
-	[sn])  REPLY=${1:1} ;;
+	[si])  REPLY=${1:1} ;;
 	T)     REPLY=true ;;
 	F)     REPLY=false ;;
 	N)     REPLY= ;;
@@ -94,18 +94,18 @@ to_int () case ${1:0:1} in
 		esac ;;
 	[FN]) REPLY=0 ;;
 	T)    REPLY=1 ;;
-	n)    REPLY=${1#?};;
+	i)    REPLY=${1#?};;
 	a)    REPLY=$arrays[$1] ;;
 	*) die "unknown type for $0: $1" ;;
 esac
 
-to_bool () [[ $1 != (s|[na]0|[FN]) ]]
+to_bool () [[ $1 != (s|[ia]0|[FN]) ]]
 
 to_ary () case $1 in # Notably not `${1:0:1}`
 	[sFN]) reply=() ;;
 	T)     reply=(T) ;;
 	s*)    reply=(s${(s::)^1#s}) ;;
-	n*)    reply=(n${${1#n}%%<->}${(s::)^1##n(-|)}) ;;
+	i*)    reply=(i${${1#i}%%<->}${(s::)^1##i(-|)}) ;;
 	a*) reply=()
 		while (( $#reply < arrays[$1] )) do
 			reply+=$arrays[$1:$#reply]
@@ -120,7 +120,7 @@ esac
 newbool () if ((?)) then REPLY=F; else REPLY=T; fi
 
 dump () case ${1:0:1} in
-	[TFn]) to_str $1; print -nr -- $REPLY ;;
+	[TFi]) to_str $1; print -nr -- $REPLY ;;
 	N) print -n null ;;
 	s) local escaped=${1#s}
 		escaped=${escaped//$'\\'/\\\\}
@@ -166,7 +166,7 @@ compare () case ${1:0:1} in
 		else; [[ ${1#s} == $REPLY ]]; REPLY=$?; fi ;;
 	T) to_bool $2; REPLY=$?;;
 	F) to_bool $2; REPLY=$(( -!? ));;
-	n) to_int $2; REPLY=$(( cmp(${1#n},REPLY) )) ;;
+	i) to_int $2; REPLY=$(( cmp(${1#i},REPLY) )) ;;
 	a) to_ary $2
 		local -a rep=($reply)
 		local i min=$(( min(arrays[$1], $#rep) ))
@@ -216,7 +216,7 @@ function next_token {
 	typeset -g match mbegin mend # Used for pattern matching
 	case $LINE in
 		(@*) REPLY=a0 LINE=${LINE:1}; return 0 ;;
-		((#b)(<->)*)                     REPLY=n$match[1] ;;
+		((#b)(<->)*)                     REPLY=i$match[1] ;;
 		((#b)([_[:lower:][:digit:]]##)*) REPLY=v$match[1] ;;
 		((#b)(\"[^\"]#\"|\'[^\']#\')*)   REPLY=s${${match#?}%?} ;;
 		((#b)([TFN][_[:upper:]]#)*)      REPLY=${LINE:0:1} ;;
@@ -296,20 +296,20 @@ function run {
 
 	case $fn in
 		# ARITY 0
-		R) REPLY=n$RANDOM ;;
+		R) REPLY=i$RANDOM ;;
 		P) read -r REPLY; REPLY=s${REPLY%%$'\r'#} ;;
 
 		# ARITY 1
 		C) run $1 ;;
 		E) to_str $1; eval_kn $REPLY ;;
-		\~) to_int $1; REPLY=n$((-REPLY)) ;;
+		\~) to_int $1; REPLY=i$((-REPLY)) ;;
 		$) to_str $1; REPLY=s$($=REPLY) ;;
 		!) ! to_bool $1; newbool ;;
 		Q) to_int $1; exit $REPLY ;;
 		L) case ${1:0:1} in
-			s) REPLY=n${#1#s} ;;
-			a) REPLY=n$arrays[$1] ;;
-			*) to_ary $1; REPLY=n$#reply ;;
+			s) REPLY=i${#1#s} ;;
+			a) REPLY=i$arrays[$1] ;;
+			*) to_ary $1; REPLY=i$#reply ;;
 			esac ;;
 		D) dump $1; REPLY=$1 ;;
 		O) if to_str $1; [[ ${REPLY: -1} = \\ ]]
@@ -319,8 +319,8 @@ function run {
 			REPLY=N ;;
 		,) new_ary $1 ;;
 		A) case ${1:0:1} in
-			s) 1=${1#s}; REPLY=n$(( #1 )) ;;
-			n) REPLY=s${(#)1#n} ;;
+			s) 1=${1#s}; REPLY=i$(( #1 )) ;;
+			i) REPLY=s${(#)1#i} ;;
 			*)  die "unknown argument to $fn: $1" ;;
 			esac ;;
 		\[) to_ary $1; REPLY=$reply[1] ;;
@@ -332,15 +332,15 @@ function run {
 		# ARITY 2
 		\;) REPLY=$2 ;;
 		+) case ${1:0:1} in
-			n) to_int $2; REPLY=n$((${1#?} + REPLY)) ;;
+			i) to_int $2; REPLY=i$((${1#?} + REPLY)) ;;
 			s) to_str $2; REPLY=s${1#?}$REPLY ;;
 			a) to_ary $1; local old=($reply)
 			   to_ary $2; new_ary $old $reply ;;
 			*) die "unknown argument to $fn: $1"
 			esac ;;
-		-) to_int $2; REPLY=n$((${1#?} - REPLY)) ;;
+		-) to_int $2; REPLY=i$((${1#?} - REPLY)) ;;
 		\*) case ${1:0:1} in
-			n) to_int $2; REPLY=n$((${1#?} * REPLY)) ;;
+			i) to_int $2; REPLY=i$((${1#?} * REPLY)) ;;
 			s) to_int $2; set -- ${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
 			a) to_ary $1; to_int $2
 				local -a ary
@@ -351,10 +351,10 @@ function run {
 				new_ary $ary ;;
 			*) die "unknown argument to $fn: $1"
 			esac ;;
-		/) to_int $2; REPLY=n$((${1#?} / REPLY)) ;;
-		%) to_int $2; REPLY=n$((${1#?} % REPLY)) ;;
+		/) to_int $2; REPLY=i$((${1#?} / REPLY)) ;;
+		%) to_int $2; REPLY=i$((${1#?} % REPLY)) ;;
 		\^) case ${1:0:1} in
-			n) to_int $2; REPLY=n$((${1#?} ** REPLY)) ;;
+			i) to_int $2; REPLY=i$((${1#?} ** REPLY)) ;;
 			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
 			*) die "unknown argument to $fn: $1"
 			esac ;;
