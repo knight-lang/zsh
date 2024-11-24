@@ -1,2 +1,2 @@
 # zsh
-Knight in ZSH!
+[Knight](https://github.com/knight-lang/knight-lang) in ZSH!
