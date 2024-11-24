@@ -76,6 +76,7 @@ ary_join () {
 #                                 Conversions                                  #
 ################################################################################
 
+## Converts its argument to a string, storing the result in $REPLY
 to_str () case $1 in
 	[si]*) REPLY=${1#?} ;;
 	T)     REPLY=true ;;
@@ -85,9 +86,10 @@ to_str () case $1 in
 	*) die "unknown type for $0: $1" ;;
 esac
 
+## Converts its argument to an integer, storing the result in $REPLY
 to_int () case $1 in
 	s*) typeset -g match mbegin mend # so `warncreateglobal` wont getmad
-	case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
+		case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
 		((#b)((-|)<->)*) REPLY=$match[1] ;;
 		((#b)(+<->)*) REPLY=${match[1]#+} ;;
 		(*) REPLY=0 ;;
@@ -99,13 +101,13 @@ to_int () case $1 in
 	*) die "unknown type for $0: $1" ;;
 esac
 
-to_bool () [[ $1 != (s|[ia]0|[FN]) ]]
+to_bool () [[ $1 != ([sFN]|[ia]0) ]]
 
 to_ary () case $1 in
-	[sFN]) reply=() ;;
+	[sFN]) reply=() ;; # Note that we handle the empty string casehere
 	T)     reply=(T) ;;
 	s*)    reply=(s${(s::)^1#s}) ;;
-	i*)    reply=(i${${1#i}%%<->}${(s::)^1##i(-|)}) ;;
+	i*)    reply=(i${${1#i}%%<->}${(s::)^1##i(-|)}) ;; # Oh boy! lol
 	a*) reply=()
 		while (( $#reply < arrays[$1] )) do
 			reply+=$arrays[$1:$#reply]
@@ -117,7 +119,7 @@ esac
 #                                  Utilities                                   #
 ################################################################################
 
-newbool () if ((?)) then REPLY=F; else REPLY=T; fi
+newbool () if (( ? )) then REPLY=F; else REPLY=T; fi
 
 dump () case $1 in
 	[TF]) to_str $1; print -nr -- $REPLY ;;
