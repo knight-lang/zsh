@@ -228,8 +228,6 @@ esac
 #                                   Parsing                                    #
 ################################################################################
 
-typeset -ga asts
-
 # readonly -A arities=(${=${:-\
 # 	{P,R}\ 0 \
 # 	{\$,O,E,B,C,Q,!,L,D,\,,A,\[,\],\~}\ 1 \
@@ -249,6 +247,7 @@ do
 	arities[$_tmp[1]]=$_tmp[2]
 done
 unset _tmp
+readonly arities
 
 typeset -g LINE 
 function next_token {
@@ -263,10 +262,10 @@ function next_token {
 	case $LINE in
 		(@*) REPLY=a0 LINE=${LINE:1}; return 0 ;;
 		((#b)(<->)*)                     REPLY=i$match[1] ;;
-		((#b)([_[:lower:][:digit:]]##)*) REPLY=v$match[1] ;;
+		((#b)([a-z_0-9]##)*)             REPLY=v$match[1] ;;
 		((#b)(\"[^\"]#\"|\'[^\']#\')*)   REPLY=s${${match#?}%?} ;;
-		((#b)([TFN][_[:upper:]]#)*)      REPLY=${LINE:0:1} ;;
-		((#b)([_[:upper:]]##|[\+\-\$\+\*\/\%\^\<\>\?\&\|\!\;\=\~\,\[\]])*)
+		((#b)([FTN][_A-Z]#)*) REPLY=${LINE:0:1} ;;
+		((#b)([A-Z_]##|[\+\-\$\+\*\/\%\^\<\>\?\&\|\!\;\=\~\,\[\]])*)
 			REPLY=f${LINE:0:1} ;;
 		(*) die "unknown token start: ${(q)LINE:0:1}" ;;
 	esac
@@ -276,37 +275,56 @@ function next_token {
 }
 
 
-## FS is 
-readonly FS=$'\0'
+readonly AST_FIELD_SEP=$'\0'
 
-function generate_ast {
-	next_token || return # If there was a problem return early
+## The global array of all ASTs; ASTS "objects" (eg what `BLOCK` returns) are
+# actually just indexes into this array, with an `A` stapled to the front.
+typeset -ga asts
 
-	[[ ${REPLY:0:1} != f ]] && return # If we're not a function just return early
+## Gets the next AST, either a literal or a function, and put it in $REPLY
+function next_ast {
+	# Parse out the token, or return if there's an error
+	next_token || return
 
-	local i token=$REPLY arity=$arities[${REPLY#f}]
-	for (( i = 1; i <= arity; i++ )); do
-		generate_ast || die "missing argument $i for function ${(qq)token:1:2}"
-		token=$token$FS$REPLY
+	# If we're not a function name, return early.
+	[[ $REPLY != f* ]] && return
+
+	# Setup local variables; `arity`` needs to be on another line because it
+	# relies on `ast` from the line before.
+	local ast=${REPLY#f}
+	local arity=$arities[$ast]
+
+	# Parse out the arguments
+	while (( arity-- )) do
+		next_ast || die "missing argument $((arities[${ast:0:1}] - arity))" \
+		                "for function ${(qq)ast:0:1}"
+		ast+=$AST_FIELD_SEP$REPLY
 	done
 
-	asts+=($token)
+	# Add the AST to the list
+	asts+=($ast)
+
+	# Set `$REPLY` to the current AST.
 	REPLY=A$#asts
 }
 
 ################################################################################
 #                                  Execution                                   #
 ################################################################################
-typeset -gA variables
 
+## Evaluates the first arg as a knight program, putting the result in $REPLY.
 function eval_kn {
-	LINE=${1?}
-	generate_ast || die 'no program given'
+	LINE=$1
+	next_ast || die 'no program given'
 	run $REPLY
 }
 
+## The list of variables that exist.
+typeset -gA variables
+
+## Executes a value, and put its result in $REPLY
 function run {
-	# Handle variables and non-asts
+	# Handle variables and non-ASTs
 	if [[ $1 = v* ]]; then
 		REPLY=$variables[$1]
 		[[ -n $REPLY ]] || die "unknown variable ${1#v}"
@@ -316,15 +334,16 @@ function run {
 		return
 	fi
 
-	# TODO
-	local i=$IFS
-	IFS=$FS
+	# There's probably a better way to do this that doesn't use IFS
+	IFS=$AST_FIELD_SEP
 	set -- ${=asts[${1#A}]#f}
-	IFS=$i
-	unset i
+	unset IFS
+
+	# The function is always the first argument
 	local fn=$1
 	shift
 
+	## Execute functions which don't automatically execute their args.
 	# Functions which don't automatically execute all their args.
 	case $fn in
 		B)  REPLY=$1; return;;
@@ -335,15 +354,21 @@ function run {
 		I)  run $1; to_bool $REPLY; run ${@[2+?]}; return;;
 	esac
 
-	local -a _tmp
-	local _tmp2
-	for _tmp2 do run $_tmp2; _tmp+=$REPLY done
-	set -- $_tmp
+	## Evaluate all the args.
+	local i
+	for (( i = 1; i <= #; i++ )); do
+		run $@[i]
+		argv[$i]=$REPLY # argv is an alias for @; we can't assign to @
+	done
 
+	## Now execute functions which _do_ automatically execute their args
 	case $fn in
 		# ARITY 0
 		R) REPLY=i$RANDOM ;;
-		P) read -r REPLY; REPLY=s${REPLY%%$'\r'#} ;;
+		P) if IFS= read -r REPLY || [[ -n $REPLY ]]
+			then REPLY=s${REPLY%%$'\r'#}
+			else REPLY=N
+			fi ;;
 
 		# ARITY 1
 		C) run $1 ;;
@@ -352,9 +377,10 @@ function run {
 		$) to_str $1; REPLY=s$($=REPLY) ;;
 		!) ! to_bool $1; newbool ;;
 		Q) to_int $1; exit $REPLY ;;
-		L) case ${1:0:1} in
-			s) REPLY=i${#1#s} ;;
-			a) REPLY=i$arrays[$1] ;;
+		L) # (technically only the * case is needed, but this speeds it up)
+			case $1 in
+			s*) REPLY=i${#1#s} ;;
+			a*) REPLY=i$arrays[$1] ;; 
 			*) to_ary $1; REPLY=i$#reply ;;
 			esac ;;
 		D) dump $1; REPLY=$1 ;;
@@ -364,31 +390,31 @@ function run {
 			fi
 			REPLY=N ;;
 		,) new_ary $1 ;;
-		A) case ${1:0:1} in
-			s) 1=${1#s}; REPLY=i$(( #1 )) ;;
-			i) REPLY=s${(#)1#i} ;;
+		A) case $1 in
+			s*) 1=${1#s}; REPLY=i$(( #1 )) ;;
+			i*) REPLY=s${(#)1#i} ;;
 			*)  die "unknown argument to $fn: $1" ;;
 			esac ;;
 		\[) to_ary $1; REPLY=$reply[1] ;;
-		\]) case ${1:0:1} in
-			s) REPLY=s${1:2} ;;
-			*) to_ary $1; shift reply; new_ary $reply ;;
+		\]) case $1 in
+			s*) REPLY=s${1:2} ;;
+			**) to_ary $1; shift reply; new_ary $reply ;;
 			esac ;;
 
 		# ARITY 2
 		\;) REPLY=$2 ;;
-		+) case ${1:0:1} in
-			i) to_int $2; REPLY=i$((${1#?} + REPLY)) ;;
-			s) to_str $2; REPLY=s${1#?}$REPLY ;;
-			a) to_ary $1; local old=($reply)
+		+) case $1 in
+			i*) to_int $2; REPLY=i$((${1#?} + REPLY)) ;;
+			s*) to_str $2; REPLY=s${1#?}$REPLY ;;
+			a*) to_ary $1; local old=($reply)
 			   to_ary $2; new_ary $old $reply ;;
 			*) die "unknown argument to $fn: $1"
 			esac ;;
 		-) to_int $2; REPLY=i$((${1#?} - REPLY)) ;;
-		\*) case ${1:0:1} in
-			i) to_int $2; REPLY=i$((${1#?} * REPLY)) ;;
-			s) to_int $2; set -- ${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
-			a) to_ary $1; to_int $2
+		\*) case $1 in
+			i*) to_int $2; REPLY=i$((${1#?} * REPLY)) ;;
+			s*) to_int $2; set -- ${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
+			a*) to_ary $1; to_int $2
 				local -a ary
 				local i=
 				for (( i = 0; i < $REPLY; i++ )); do
@@ -399,31 +425,35 @@ function run {
 			esac ;;
 		/) to_int $2; REPLY=i$((${1#?} / REPLY)) ;;
 		%) to_int $2; REPLY=i$((${1#?} % REPLY)) ;;
-		\^) case ${1:0:1} in
-			i) to_int $2; REPLY=i$((${1#?} ** REPLY)) ;;
-			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
+		\^) case $1 in
+			i*) to_int $2; REPLY=i$((${1#?} ** REPLY)) ;;
+			a*) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
 			*) die "unknown argument to $fn: $1"
 			esac ;;
 		\?) are_equal $1 $2; newbool ;;
 		\<) compare $1 $2; (( REPLY < 0 )); newbool ;;
 		\>) compare $1 $2; (( REPLY > 0 )); newbool ;;
-		G) case ${1:0:1} in
-			s) to_int $2
+
+		## Arity 3
+		G) case $1 in
+			s*) to_int $2
 				local start=$REPLY
 				to_int $3
 				REPLY=s${${1#s}:$start:$REPLY} ;;
-			a) to_ary $1
+			a*) to_ary $1
 				to_int $2; shift $REPLY reply
 				to_int $3; shift -p $(($#reply - REPLY)) reply
 				new_ary $reply ;;
 			*) die "unknown argument to $fn: $1" ;;
 			esac ;;
-		S) case ${1:0:1} in
-			s) to_int $2; local start=$REPLY
+
+		## Arity 4
+		S) case $1 in
+			s*) to_int $2; local start=$REPLY
 				to_int $3; local len=$REPLY
 				to_str $4
 				REPLY=${1:0:$((start+1))}$REPLY${1:$((start+1+len))} ;;
-			a) to_ary $1; local answer=($reply)
+			a*) to_ary $1; local answer=($reply)
 				to_int $2; local start=$REPLY
 				to_int $3; local len=$REPLY
 				to_ary $4;
@@ -436,8 +466,19 @@ function run {
 	return 0
 }
 
-if [[ $1 = -e ]]; then
-	eval_kn $2
-else
-	eval_kn "$(<$2)"
-fi
+################################################################################
+#                          Handle command-line input                           #
+################################################################################
+
+usage () cat <<<"usage: ${ZSH_SCRIPT:t} [-h] (-e expr | -f file)"
+
+case $# in
+	0) set -- -f /dev/stdin ;&
+	2) case $1 in
+			-f) 2="$(<$2)" || exit ;&
+			-e) eval_kn $2; exit ;;
+			-h) usage; exit ;;
+			# in the error case, fall thru to the usage
+		esac ;&
+	*) usage >&2; exit 1
+esac
