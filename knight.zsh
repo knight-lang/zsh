@@ -76,17 +76,17 @@ ary_join () {
 #                                 Conversions                                  #
 ################################################################################
 
-to_str () case ${1:0:1} in
-	[si])  REPLY=${1:1} ;;
+to_str () case $1 in
+	[si]*) REPLY=${1#?} ;;
 	T)     REPLY=true ;;
 	F)     REPLY=false ;;
 	N)     REPLY= ;;
-	a)     ary_join $'\n' $1 ;; # `ary_join` sets result
+	a*)    ary_join $'\n' $1 ;; # `ary_join` sets result
 	*) die "unknown type for $0: $1" ;;
 esac
 
-to_int () case ${1:0:1} in
-	s) typeset -g match mbegin mend # so `warncreateglobal` wont getmad
+to_int () case $1 in
+	s*) typeset -g match mbegin mend # so `warncreateglobal` wont getmad
 	case ${1##s[[:space:]]#} in # AFAICT, zsh doesn't have a C-style `atoi`.
 		((#b)((-|)<->)*) REPLY=$match[1] ;;
 		((#b)(+<->)*) REPLY=${match[1]#+} ;;
@@ -94,14 +94,14 @@ to_int () case ${1:0:1} in
 		esac ;;
 	[FN]) REPLY=0 ;;
 	T)    REPLY=1 ;;
-	i)    REPLY=${1#?};;
-	a)    REPLY=$arrays[$1] ;;
+	i*)   REPLY=${1#i};;
+	a*)   REPLY=$arrays[$1] ;;
 	*) die "unknown type for $0: $1" ;;
 esac
 
 to_bool () [[ $1 != (s|[ia]0|[FN]) ]]
 
-to_ary () case $1 in # Notably not `${1:0:1}`
+to_ary () case $1 in
 	[sFN]) reply=() ;;
 	T)     reply=(T) ;;
 	s*)    reply=(s${(s::)^1#s}) ;;
@@ -119,17 +119,18 @@ esac
 
 newbool () if ((?)) then REPLY=F; else REPLY=T; fi
 
-dump () case ${1:0:1} in
-	[TFi]) to_str $1; print -nr -- $REPLY ;;
+dump () case $1 in
+	[TF]) to_str $1; print -nr -- $REPLY ;;
 	N) print -n null ;;
-	s) local escaped=${1#s}
+	i*) print -n ${1#i} ;;
+	s*) local escaped=${1#s}
 		escaped=${escaped//$'\\'/\\\\}
 		escaped=${escaped//$'\n'/\\n}
 		escaped=${escaped//$'\r'/\\r}
 		escaped=${escaped//$'\t'/\\t}
 		escaped=${escaped//$'\"'/\\\"}
 		print -nr -- \"$escaped\" ;;
-	a) print -n \[
+	a*) print -n \[
 		local i
 		for (( i = 0; i < $arrays[$1]; i++ )) do
 			(( i )) && print -n ', '
@@ -141,7 +142,7 @@ esac
 
 eql () {
 	[[ $1 = $2 ]] && return 0
-	[[ ${1:0:1} == a && ${2:0:1} == a ]] || return 1
+	[[ $1 = a* && $2 = a* ]] || return 1
 	(( arrays[$1] == arrays[$2] )) || return 1
 
 	local i
@@ -160,14 +161,14 @@ min () {
 functions -M cmp 2 2
 cmp () { (( $1 < $2 ? -1 : $1 > $2 )); : }
 
-compare () case ${1:0:1} in
-	s) to_str $2;
+compare () case $1 in
+	s*) to_str $2;
 		if [[ ${1#s} < $REPLY ]]; then REPLY=-1
 		else; [[ ${1#s} == $REPLY ]]; REPLY=$?; fi ;;
 	T) to_bool $2; REPLY=$?;;
 	F) to_bool $2; REPLY=$(( -!? ));;
-	i) to_int $2; REPLY=$(( cmp(${1#i},REPLY) )) ;;
-	a) to_ary $2
+	i*) to_int $2; REPLY=$(( cmp(${1#i},REPLY) )) ;;
+	a*) to_ary $2
 		local -a rep=($reply)
 		local i min=$(( min(arrays[$1], $#rep) ))
 		for (( i = 0; i < min; i++ )) do
@@ -261,11 +262,11 @@ function eval_kn {
 
 function run {
 	# Handle variables and non-asts
-	if [[ ${1:0:1} = v ]]; then
+	if [[ $1 = v* ]]; then
 		REPLY=$variables[$1]
 		[[ -n $REPLY ]] || die "unknown variable ${1#v}"
 		return
-	elif [[ ${1:0:1} != A ]]; then
+	elif [[ $1 != A* ]]; then
 		REPLY=$1
 		return
 	fi
