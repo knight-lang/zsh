@@ -24,6 +24,38 @@ die () {
 }
 
 ################################################################################
+#                                Math Functions                                #
+################################################################################
+
+## These functions are used within "math contexts" (ie `(( ... ))`), and are
+# registered via `function -M`. The return value of a math function is the last
+# math-expression that was executed from within it. 
+
+## Returns the minimum of all the arguments its given
+functions -M min 1 -1 math_min
+math_min () {
+	local arg min=$1 # Start min off at the first argument
+
+	for arg do
+		# Assign `min` to the smaller of the two values. Since this is a math
+		# operation, it also doubles as the return value of the function.
+		(( min = arg < min ? arg : min ))
+	done
+
+ 	# It was successful. We can't `return 0` as that's a math operation itself.
+	true
+}
+
+## Returns `-1`, `0`, or `1` depending on whether the first argument is smaller
+# than, equal to or greater than the second argument.
+functions -M cmp 2 2 math_cmp
+math_cmp () {
+	# (This uses the fact that `a > b` returns `1` or `0`)
+	(( $1 < $2 ? -1 : $1 > $2 ))
+	true
+}
+
+################################################################################
 #                                    Arrays                                    #
 ################################################################################
 
@@ -101,10 +133,12 @@ to_int () case $1 in
 	*) die "unknown type for $0: $1" ;;
 esac
 
+## Returns 0 if its argument is truthy
 to_bool () [[ $1 != ([sFN]|[ia]0) ]]
 
+## Converts its argument to an array, storing the result in $reply
 to_ary () case $1 in
-	[sFN]) reply=() ;; # Note that we handle the empty string casehere
+	[sFN]) reply=() ;; # Note that we handle the empty string case here
 	T)     reply=(T) ;;
 	s*)    reply=(s${(s::)^1#s}) ;;
 	i*)    reply=(i${${1#i}%%<->}${(s::)^1##i(-|)}) ;; # Oh boy! lol
@@ -119,14 +153,16 @@ esac
 #                                  Utilities                                   #
 ################################################################################
 
+## Sets `REPLY` to `T` or `F` based on the exit status of the last command.
 newbool () if (( ? )) then REPLY=F; else REPLY=T; fi
 
+## Dumps its argument to stdout.
 dump () case $1 in
 	[TF]) to_str $1; print -nr -- $REPLY ;;
 	N) print -n null ;;
 	i*) print -n ${1#i} ;;
 	s*) local escaped=${1#s}
-		escaped=${escaped//$'\\'/\\\\}
+		escaped=${escaped//$'\\'/\\\\} # I wish there a was a better way to do this
 		escaped=${escaped//$'\n'/\\n}
 		escaped=${escaped//$'\r'/\\r}
 		escaped=${escaped//$'\t'/\\t}
@@ -142,40 +178,47 @@ dump () case $1 in
 	*) die "unknown type for $0: $1"
 esac
 
-eql () {
+## Returns whether its arguments are equal, ie knight's `?` function
+are_equal () {
+	# If they're identical, then they're equal.
 	[[ $1 = $2 ]] && return 0
-	[[ $1 = a* && $2 = a* ]] || return 1
-	(( arrays[$1] == arrays[$2] )) || return 1
 
+	# If either element isn't an array, then they're not equal; arrays are the
+	# only type which require more than a simple `=` comparison
+	[[ $1 != a* || $2 != a* ]] && return 1
+
+	# If the arrays lengths aren't the same, they're not equal.
+	(( arrays[$1] != arrays[$2] )) && return 1
+
+	# If any element of either array isn't the same, they're not equal.
 	local i
 	for (( i = 0; i < $arrays[$1]; i++ )) do
-		eql $arrays[$1:$i] $arrays[$2:$i] || return 1
+		are_equal $arrays[$1:$i] $arrays[$2:$i] || return 1
 	done
+
+	# The arrays were equal!
 	return 0
 }
 
-functions -M min 1 -1
-min () {
-	local arg min=$(($1)); shift # do `$(($1))` so we have a math eval already
-	for arg do (( arg < min ? (min=arg) : min )) done
-}
-
-functions -M cmp 2 2
-cmp () { (( $1 < $2 ? -1 : $1 > $2 )); : }
-
+## Sets $REPLY to `-1`, `0`, or `1` depending on whether the first argument is
+# smaller than, equal to or greater than the second argument.
 compare () case $1 in
 	s*) to_str $2;
-		if [[ ${1#s} < $REPLY ]]; then REPLY=-1
-		else; [[ ${1#s} == $REPLY ]]; REPLY=$?; fi ;;
+		if [[ ${1#s} < $REPLY ]]; then
+			REPLY=-1
+		else
+			[[ ${1#s} == $REPLY ]]
+			REPLY=$? # Abuse the return value of the `[[` comparison
+		fi ;;
 	T) to_bool $2; REPLY=$?;;
-	F) to_bool $2; REPLY=$(( -!? ));;
+	F) to_bool $2; REPLY=$(( -!? ));; # The `?` here is actually `$?`
 	i*) to_int $2; REPLY=$(( cmp(${1#i},REPLY) )) ;;
 	a*) to_ary $2
-		local -a rep=($reply)
+		local -a rep=($reply) # can't use `$reply` in case we're recursive
 		local i min=$(( min(arrays[$1], $#rep) ))
 		for (( i = 0; i < min; i++ )) do
 			compare $arrays[$1:$i] $rep[i+1]
-			(( REPLY )) && return
+			(( REPLY )) && return # return when `$REPLY` is nonzero, ie not equal.
 		done
 		REPLY=$(( cmp(arrays[$1], $#rep) )) ;;
 	*) die "unknown type for $0: $1"
@@ -210,9 +253,9 @@ unset _tmp
 typeset -g LINE 
 function next_token {
 	# Strip leading whitespace and comments
-	LINE=${LINE##(\#[^$'\n']#|[:()\{\}[:space:]]#)#}
+	LINE=${LINE##(\#[^$'\n']#|[:(){}[:space:]]#)#}
 
-	# Return if the line is empty
+	# Return early if the line is empty
 	[[ -z $LINE ]] && return 1
 
 	# Parse the token
@@ -361,7 +404,7 @@ function run {
 			a) to_str $2; ary_join "$REPLY" $1; REPLY=s$REPLY ;; # TODO: whyis reply quoted here??
 			*) die "unknown argument to $fn: $1"
 			esac ;;
-		\?) eql $1 $2; newbool ;;
+		\?) are_equal $1 $2; newbool ;;
 		\<) compare $1 $2; (( REPLY < 0 )); newbool ;;
 		\>) compare $1 $2; (( REPLY > 0 )); newbool ;;
 		G) case ${1:0:1} in
