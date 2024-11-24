@@ -1,2 +1,2 @@
 # zsh
-Knight in ZSH
+Knight in ZSH!
