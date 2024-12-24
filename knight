@@ -207,7 +207,7 @@ are_equal () {
 # smaller than, equal to or greater than the second argument.
 compare () case $1 in
 	s*) to_str $2;
-		if [[ ${1#s} < $REPLY ]]; then
+		if [[ ${1#s} < $REPLY ]] then
 			REPLY=-1
 		else
 			[[ ${1#s} == $REPLY ]]
@@ -317,11 +317,11 @@ typeset -gA variables
 ## Executes a value, and put its result in $REPLY
 function run {
 	# Handle variables and non-ASTs
-	if [[ $1 = v* ]]; then
+	if [[ $1 = v* ]] then
 		REPLY=$variables[$1]
 		[[ -n $REPLY ]] || die "unknown variable ${1#v}"
 		return
-	elif [[ $1 != A* ]]; then
+	elif [[ $1 != A* ]] then
 		REPLY=$1
 		return
 	fi
@@ -348,7 +348,7 @@ function run {
 	## Now for functions which _do_ evaluate all their arguments. Here, we
 	# replace the arguments with their evaluated version one-at-a-time.
 	local i
-	for (( i = 1; i <= #; i++ )); do
+	for (( i = 1; i <= #; i++ )) do
 		run $@[i]
 		argv[$i]=$REPLY # argv is an alias for @; we can't assign to @
 	done
@@ -357,10 +357,12 @@ function run {
 	case $fn in
 		# ARITY 0
 		R) REPLY=i$RANDOM ;;
-		P)
-			if IFS= read -r REPLY || [[ -n $REPLY ]]
-			then REPLY=s${REPLY%$'\r'}
-			else REPLY=N
+		P) if IFS= read -r REPLY; then
+				REPLY=s${REPLY%$'\r'}
+			elif [[ -n $REPLY ]] then
+				REPLY=s$REPLY
+			else
+				REPLY=N
 			fi ;;
 
 		# ARITY 1
@@ -406,7 +408,7 @@ function run {
 			i*) to_int $2; REPLY=i$((${1#?} * REPLY)) ;;
 			s*) to_int $2; 1=${1#s}; REPLY=s${(pl:$((${#1} * REPLY))::$1:)} ;;
 			a*) to_ary $1; to_int $2; local -a ary
-				for (( i = 0; i < REPLY; i++ )); do
+				for (( i = 0; i < REPLY; i++ )) do
 					ary+=($reply)
 				done
 				new_ary $ary ;;
