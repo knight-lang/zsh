@@ -13,6 +13,9 @@ setopt warncreateglobal # Make sure global variables aren't created accidentally
 # (If you don't seed it, ZSH will always use the same initial seed)
 RANDOM=$(date +%s)
 
+## Set `FUNCNEST` to a large number, as knight does a lot of nested calls.
+FUNCNEST=10000
+
 ## Predeclare global variables so `warncreateglobal` won't get mad at us.
 typeset -g REPLY  # "Return value" from functions
 typeset -ga reply # Same as REPLY, but when an array is needed
@@ -354,8 +357,9 @@ function run {
 	case $fn in
 		# ARITY 0
 		R) REPLY=i$RANDOM ;;
-		P) if IFS= read -r REPLY || [[ -n $REPLY ]]
-			then REPLY=s${REPLY%%$'\r'#}
+		P)
+			if IFS= read -r REPLY || [[ -n $REPLY ]]
+			then REPLY=s${REPLY%$'\r'}
 			else REPLY=N
 			fi ;;
 
@@ -369,7 +373,7 @@ function run {
 		L) # (technically only the * case is needed, but this speeds it up)
 			case $1 in
 			s*) REPLY=i${#1#s} ;;
-			a*) REPLY=i$arrays[$1] ;; 
+			a*) REPLY=i$arrays[$1] ;;
 			*)  to_ary $1; REPLY=i$#reply ;;
 			esac ;;
 		D) dump $1; REPLY=$1 ;;
@@ -385,11 +389,10 @@ function run {
 			*)  die "unknown argument to $fn: $1" ;;
 			esac ;;
 		\[) to_ary $1; REPLY=$reply[1] ;;
-		\]) case $1 in
-			s*) REPLY=s${1:2} ;;
-			*)  to_ary $1; shift reply; new_ary $reply ;;
-			esac ;;
-
+		\]) if [[ $1 = s* ]]
+			then REPLY=s${1:2}
+			else to_ary $1; shift reply; new_ary $reply
+			fi ;;
 		# ARITY 2
 		\;) REPLY=$2 ;;
 		+) case $1 in
